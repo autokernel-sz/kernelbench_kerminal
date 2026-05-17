@@ -136,6 +136,7 @@ def _get_arch_section(hardware_name: str) -> str:
     return {
         "rtx3090": ARCH_RTX3090,
         "h100": ARCH_H100,
+        "h100_local": ARCH_H100,
         "b200": ARCH_B200,
     }.get(hardware_name, "")
 

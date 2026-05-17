@@ -6,14 +6,16 @@ from src.hardware import TARGETS, get_target, list_targets
 def test_all_targets_registered():
     assert "rtx3090" in TARGETS
     assert "h100" in TARGETS
+    assert "h100_local" in TARGETS
     assert "b200" in TARGETS
     assert "m4max" in TARGETS
 
 
 def test_list_targets():
     names = list_targets()
-    assert len(names) == 4
+    assert len(names) == 5
     assert "rtx3090" in names
+    assert "h100_local" in names
 
 
 def test_rtx3090_config():
@@ -30,6 +32,14 @@ def test_m4max_config():
     assert t.is_metal
     assert "metal_level1" in t.problem_dirs
     assert "4_FP8_Matmul.py" in t.exclude_problems
+
+
+def test_h100_local_config():
+    t = get_target("h100_local")
+    assert t.display_name == "H100 Local"
+    assert t.gpu_sku == "H100"
+    assert t.vram_gb == 80
+    assert "tile_specialized" in t.problem_dirs
 
 
 def test_problem_discovery():

@@ -1,0 +1,26 @@
+\begin{table}[t]
+\centering
+\small
+\caption{H100 pass counts by KernelBench level.}
+\label{tab:h100-level-pass}
+\begin{tabular}{lrrrrrr}
+\toprule
+Model & L1 Pass & L2 Pass & L3 Pass & L4 Pass & All Pass & Geo Speedup \\
+\midrule
+Kerminal Default & 26/28 & 15/15 & 3/3 & 3/8 & 47/54 & 1.60x \\
+GPT-5.4 & 23/28 & 11/15 & 3/3 & 5/8 & 42/54 & 0.65x \\
+Gemini 3 Flash Preview & 24/28 & 10/15 & 3/3 & 4/8 & 41/54 & 0.78x \\
+GPT-5.3 & 26/28 & 9/15 & 2/3 & 3/8 & 40/54 & 0.45x \\
+Claude Opus 4.6 & 23/28 & 11/15 & 1/3 & 2/8 & 37/54 & 1.18x \\
+GLM-5 & 22/28 & 5/15 & 1/3 & 4/8 & 32/54 & 0.76x \\
+Kimi K2.5 & 15/28 & 6/15 & 3/3 & 3/8 & 27/54 & 0.80x \\
+Qwen3.5 397B A17B & 17/28 & 4/15 & 1/3 & 0/8 & 22/54 & 0.54x \\
+Claude Sonnet 4.6 & 12/28 & 5/15 & 0/3 & 2/8 & 19/54 & 0.80x \\
+Qwen: Qwen3.5-122B-A10B & 11/28 & 3/15 & 0/3 & 3/8 & 17/54 & 0.49x \\
+MiniMax M2.7 & 10/28 & 3/15 & 0/3 & 1/8 & 14/54 & 0.41x \\
+Gemini 3.1 Pro Preview & 8/28 & 4/15 & 0/3 & 1/8 & 13/54 & 1.14x \\
+MiniMax M2.5 & 3/28 & 3/15 & 2/3 & 1/8 & 9/54 & 1.20x \\
+Qwen: Qwen3.5-35B-A3B & 0/28 & 0/15 & 0/3 & 0/8 & 0/54 & -- \\
+\bottomrule
+\end{tabular}
+\end{table}

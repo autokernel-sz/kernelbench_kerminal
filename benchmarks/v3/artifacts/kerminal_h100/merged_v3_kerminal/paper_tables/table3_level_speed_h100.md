@@ -1,0 +1,16 @@
+| Model | L1 Geo | L2 Geo | L3 Geo | L4 Geo | All Geo |
+| --- | --- | --- | --- | --- | --- |
+| Kerminal Default | 1.42x | 1.50x | 4.62x | 2.13x | 1.60x |
+| GPT-5.4 | 0.70x | 0.78x | 0.85x | 0.27x | 0.65x |
+| Gemini 3 Flash Preview | 0.66x | 0.99x | 1.49x | 0.72x | 0.78x |
+| GPT-5.3 | 0.53x | 0.28x | 1.10x | 0.28x | 0.45x |
+| Claude Opus 4.6 | 1.01x | 1.58x | 10.83x | 0.48x | 1.18x |
+| GLM-5 | 0.70x | 1.50x | 1.32x | 0.45x | 0.76x |
+| Kimi K2.5 | 0.91x | 0.88x | 0.79x | 0.36x | 0.80x |
+| Qwen3.5 397B A17B | 0.61x | 0.25x | 1.35x | -- | 0.54x |
+| Claude Sonnet 4.6 | 0.74x | 1.05x | -- | 0.69x | 0.80x |
+| Qwen: Qwen3.5-122B-A10B | 0.42x | 0.41x | -- | 1.02x | 0.49x |
+| MiniMax M2.7 | 0.35x | 0.53x | -- | 1.00x | 0.41x |
+| Gemini 3.1 Pro Preview | 1.08x | 1.24x | -- | 1.20x | 1.14x |
+| MiniMax M2.5 | 1.57x | 0.98x | 1.21x | 0.99x | 1.20x |
+| Qwen: Qwen3.5-35B-A3B | -- | -- | -- | -- | -- |

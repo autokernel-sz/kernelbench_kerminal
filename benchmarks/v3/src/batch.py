@@ -71,6 +71,7 @@ def run_single_eval(
     max_turns: Optional[int] = None,
     turn_artifact_dir: Optional[Path] = None,
     judge_model_key: Optional[str] = None,
+    max_time_seconds: Optional[int] = None,
 ) -> EvalResult:
     from src.eval.agent import run_eval
     from src.hardware import get_target
@@ -82,7 +83,7 @@ def run_single_eval(
 
     if max_turns is None:
         max_turns = target.max_turns(level)
-    max_time = target.max_time(level)
+    max_time = max_time_seconds if max_time_seconds is not None else target.max_time(level)
 
     with open(problem_path) as f:
         problem_code = f.read()

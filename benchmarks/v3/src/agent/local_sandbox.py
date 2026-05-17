@@ -166,6 +166,13 @@ class LocalSandbox:
         """Get GPU information."""
         return self._gpu_info
 
+    @property
+    def workspace_path(self) -> Path:
+        """Absolute path to the local sandbox workspace."""
+        if not self._workspace:
+            raise RuntimeError("Sandbox not started")
+        return self._workspace
+
     def __enter__(self):
         self.start()
         return self

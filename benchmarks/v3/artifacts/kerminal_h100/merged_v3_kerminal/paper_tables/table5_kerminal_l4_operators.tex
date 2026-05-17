@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\small
+\caption{Kerminal H100 Level 4 per-operator results.}
+\label{tab:kerminal-l4}
+\begin{tabular}{lrrrrrrr}
+\toprule
+Level & Problem & Category & Correct & Speedup & Ref ms & Sol ms & Error \\
+\midrule
+L4 & DeepSeek MLA & Other & N & -- & -- & -- &  \\
+L4 & DeepSeek MoE & Other & N & -- & -- & -- &  \\
+L4 & GroupedQueryAttention & Other & N & -- & -- & -- &  \\
+L4 & FP8 Matmul & GEMM & Y & 1.13x & 0.780 & 0.687 &  \\
+L4 & MoE GatedGEMM & Fused & Y & 8.12x & 123.065 & 15.155 &  \\
+L4 & INT4 Quantized GEMM & GEMM & Y & 1.04x & 1.157 & 1.109 &  \\
+L4 & GatedDeltaNet & Other & N & -- & -- & -- &  \\
+L4 & KimiDeltaAttention & Other & N & -- & -- & -- &  \\
+\bottomrule
+\end{tabular}
+\end{table}

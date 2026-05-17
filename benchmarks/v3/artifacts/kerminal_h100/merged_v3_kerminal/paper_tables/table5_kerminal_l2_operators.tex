@@ -1,0 +1,27 @@
+\begin{table}[t]
+\centering
+\small
+\caption{Kerminal H100 Level 2 per-operator results.}
+\label{tab:kerminal-l2}
+\begin{tabular}{lrrrrrrr}
+\toprule
+Level & Problem & Category & Correct & Speedup & Ref ms & Sol ms & Error \\
+\midrule
+L2 & Conv2d InstanceNorm Divide & Fused & Y & 0.64x & 0.248 & 0.386 &  \\
+L2 & Matmul Swish Sum GroupNorm & Fused & Y & 2.05x & 0.175 & 0.086 &  \\
+L2 & Matmul Scaling ResidualAdd & Fused & Y & 1.56x & 0.172 & 0.110 &  \\
+L2 & Conv2d Subtract Tanh Subtract AvgPool & Fused & Y & 0.95x & 0.250 & 0.262 &  \\
+L2 & Conv2d Activation BatchNorm & Fused & Y & 0.70x & 0.208 & 0.297 &  \\
+L2 & Matmul MaxPool Sum Scale & Fused & Y & 2.79x & 0.221 & 0.079 &  \\
+L2 & Matmul Swish Scaling & Fused & Y & 2.11x & 0.170 & 0.081 &  \\
+L2 & Matmul Dropout Mean Softmax & Fused & Y & 2.48x & 0.214 & 0.086 &  \\
+L2 & Conv3d Softmax MaxPool MaxPool & Fused & Y & 2.89x & 2.064 & 0.713 &  \\
+L2 & Conv2d BatchNorm Scaling & Fused & Y & 1.02x & 0.204 & 0.200 &  \\
+L2 & Conv2d Tanh Scaling BiasAdd Max & Fused & Y & 0.96x & 0.245 & 0.255 &  \\
+L2 & Conv2d GroupNorm Scale MaxPool Clamp & Fused & Y & 0.77x & 0.293 & 0.383 &  \\
+L2 & Matmul Divide GELU & Fused & Y & 2.49x & 0.172 & 0.069 &  \\
+L2 & Matmul AvgPool GELU Scale Max & Fused & Y & 2.04x & 0.224 & 0.110 &  \\
+L2 & Matmul GELU Softmax & Fused & Y & 2.07x & 0.175 & 0.085 &  \\
+\bottomrule
+\end{tabular}
+\end{table}

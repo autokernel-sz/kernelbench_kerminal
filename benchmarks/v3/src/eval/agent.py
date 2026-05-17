@@ -497,7 +497,7 @@ def run_eval(
 
     sandbox = hardware_target.create_sandbox(problem_code)
 
-    alarm_handler = _begin_problem_alarm(level)
+    alarm_handler = _begin_problem_alarm(level, {level: max_time} if max_time else None)
     try:
         sandbox.start()
         print(f"Sandbox started: {sandbox.get_gpu_info()}", flush=True)
@@ -533,6 +533,41 @@ def run_eval(
             reference_code=problem_code,
             metadata=reference_metadata,
         )
+
+        if model_config.provider == "kerminal":
+            from src.eval.kerminal_runner import run_kerminal_agent
+
+            run = run_kerminal_agent(
+                model_id=model_config.model_id,
+                sandbox=sandbox,
+                system_prompt=system_prompt,
+                initial_user_message=initial_user_message,
+                max_turns=max_turns,
+                max_time=max_time,
+                is_metal=hardware_target.is_metal,
+            )
+            if run.error:
+                result.error = run.error
+            submitted, solution_path = run.submitted, run.solution_path
+            result.submitted = submitted
+            _finalize_agent_result(
+                result,
+                submitted,
+                solution_path,
+                run.input_tokens,
+                run.output_tokens,
+                run.turns_used,
+                model_config,
+                sandbox,
+                hardware_target,
+                level,
+                run.cache_creation_tokens,
+                run.cache_read_tokens,
+                judge_model_key=judge_model_key,
+                problem_code=problem_code,
+            )
+            result.elapsed_seconds = time.time() - start_time
+            return result
 
         if model_config.provider == "gemini":
             submitted, solution_path, turns_used, input_tokens, output_tokens = _run_gemini_agent(

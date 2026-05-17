@@ -59,7 +59,7 @@ def is_valid_openrouter_model(model_id: str) -> bool:
 class ModelConfig:
     name: str
     model_id: str
-    provider: Literal["anthropic", "openai", "gemini", "xai", "zai", "openrouter"]
+    provider: Literal["anthropic", "openai", "gemini", "xai", "zai", "openrouter", "kerminal"]
     use_xml_tools: bool = False
     provider_order: Optional[List[str]] = None
     reasoning_mode: bool = False
@@ -69,6 +69,9 @@ class ModelConfig:
 
 
 MODELS: Dict[str, ModelConfig] = {
+    "kerminal/default": ModelConfig(
+        name="Kerminal Default", model_id="default", provider="kerminal",
+    ),
     "anthropic/claude-opus-4.6": ModelConfig(
         name="Claude Opus 4.6", model_id="anthropic/claude-opus-4.6", provider="openrouter",
         provider_order=["Anthropic"],
@@ -144,6 +147,11 @@ MODELS: Dict[str, ModelConfig] = {
 def get_model_config(model_key: str) -> Optional[ModelConfig]:
     if model_key in MODELS:
         return MODELS[model_key]
+
+    if model_key.startswith("kerminal/"):
+        model_id = model_key.split("/", 1)[1] or "default"
+        display = "Kerminal Default" if model_id == "default" else f"Kerminal {model_id}"
+        return ModelConfig(name=display, model_id=model_id, provider="kerminal")
 
     if "/" in model_key:
         if is_valid_openrouter_model(model_key):
