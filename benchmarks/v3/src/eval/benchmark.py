@@ -107,7 +107,7 @@ try:
         return module
 
     reference_module = load_module("kb_reference", "reference.py")
-    solution_module = load_module("kb_solution", "solution.py")
+    solution_module = load_module("kb_solution", __SOLUTION_PATH__)
     RefModel, SolModel = reference_module.Model, solution_module.Model
     get_inputs = reference_module.get_inputs
     get_init_inputs = reference_module.get_init_inputs
@@ -464,10 +464,10 @@ def check_valid_output(array_np, name="output"):
 
 try:
     reference_module = load_module("kb_reference", "reference.py")
-    solution_module = load_module("kb_solution", "solution.py")
+    solution_module = load_module("kb_solution", __SOLUTION_PATH__)
 
     if not hasattr(solution_module, "solution"):
-        print(json.dumps({"compiled": False, "correct": False, "speedup": None, "error": "solution.py must define solution(*inputs)"}))
+        print(json.dumps({"compiled": False, "correct": False, "speedup": None, "error": __SOLUTION_PATH__ + " must define solution(*inputs)"}))
         sys.exit(0)
 
     RefModel = reference_module.Model
@@ -790,6 +790,21 @@ except Exception as exc:
 MAX_PROBLEM_TIME_SECONDS = {1: 300, 2: 600, 3: 900, 4: 1200}
 
 
+def _command_output_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)
+
+
+def _benchmark_solution_path(solution_path: str) -> str:
+    """Return a path usable inside _benchmark.py from the sandbox workspace."""
+    if solution_path.startswith("/workspace/"):
+        return solution_path[len("/workspace/"):]
+    return solution_path
+
+
 _GPU_LOCK_PATH = Path(tempfile.gettempdir()) / "kernelbench_gpu.lock"
 _gpu_lock = FileLock(_GPU_LOCK_PATH, timeout=-1)
 
@@ -801,12 +816,11 @@ def run_benchmark(sandbox, solution_path: str, hardware: str, level: int, is_met
     This prevents contention that would corrupt timing measurements when
     multiple workers finish their agent loops concurrently.
     """
-    if not solution_path.startswith("/"):
-        solution_path = f"/workspace/{solution_path}"
-    if not sandbox.file_exists(solution_path.replace("/workspace/", "")):
+    benchmark_solution_path = _benchmark_solution_path(solution_path)
+    if not sandbox.file_exists(benchmark_solution_path):
         return {"compiled": False, "error": f"Solution not found: {solution_path}"}
 
-    solution_code = sandbox.read_file(solution_path.replace("/workspace/", ""))
+    solution_code = sandbox.read_file(benchmark_solution_path)
     guardrail_error = validate_solution(solution_code, is_metal=is_metal)
     if guardrail_error:
         return {"compiled": False, "correct": False, "speedup": None, "error": guardrail_error}
@@ -818,6 +832,7 @@ def run_benchmark(sandbox, solution_path: str, hardware: str, level: int, is_met
         .replace("__HARDWARE_PRECISIONS__", json.dumps(HARDWARE_PRECISIONS))
         .replace("__OP_PRECISION_VALIDITY__", json.dumps(OP_PRECISION_VALIDITY))
         .replace("__HARDWARE_PEAK_TFLOPS__", json.dumps(HARDWARE_PEAK_TFLOPS))
+        .replace("__SOLUTION_PATH__", json.dumps(benchmark_solution_path))
     )
 
     sandbox.write_file("_benchmark.py", benchmark_script)
@@ -828,15 +843,25 @@ def run_benchmark(sandbox, solution_path: str, hardware: str, level: int, is_met
         print("GPU lock acquired, benchmarking...", flush=True)
         result = sandbox.run_command("python _benchmark.py", timeout=benchmark_timeout)
 
-    print(f"Benchmark output:\n{result['stdout']}", flush=True)
-    if result["stderr"]:
-        print(f"Errors:\n{result['stderr']}", flush=True)
+    stdout = _command_output_text(result.get("stdout"))
+    stderr = _command_output_text(result.get("stderr"))
+    print(f"Benchmark output:\n{stdout}", flush=True)
+    if stderr:
+        print(f"Errors:\n{stderr}", flush=True)
 
-    for line in result["stdout"].split("\n"):
+    for line in stdout.splitlines():
         if line.startswith("{"):
             try:
                 return json.loads(line)
             except Exception:
                 continue
+
+    if result.get("timed_out"):
+        return {
+            "compiled": False,
+            "correct": False,
+            "speedup": None,
+            "error": f"Benchmark timed out after {benchmark_timeout}s",
+        }
 
     return {"compiled": False, "error": "Failed to parse benchmark output"}

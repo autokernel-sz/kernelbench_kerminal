@@ -386,6 +386,7 @@ def _finalize_agent_result(
     cache_read_tokens: int = 0,
     judge_model_key: Optional[str] = None,
     problem_code: str = "",
+    precomputed_benchmark_result: Optional[dict] = None,
 ) -> None:
     result.turns = turns_used
     result.submitted = submitted
@@ -422,15 +423,19 @@ def _finalize_agent_result(
 
         attach_solution_metadata(result, solution_path, sandbox)
 
-        from src.eval.benchmark import run_benchmark
+        if precomputed_benchmark_result is not None:
+            benchmark_result = precomputed_benchmark_result
+            print("Using precomputed best-of-turns benchmark result", flush=True)
+        else:
+            from src.eval.benchmark import run_benchmark
 
-        benchmark_result = run_benchmark(
-            sandbox,
-            solution_path,
-            hardware=hardware_target.gpu_sku,
-            level=level,
-            is_metal=hardware_target.is_metal,
-        )
+            benchmark_result = run_benchmark(
+                sandbox,
+                solution_path,
+                hardware=hardware_target.gpu_sku,
+                level=level,
+                is_metal=hardware_target.is_metal,
+            )
         if benchmark_result is not None:
             apply_benchmark_metrics(result, benchmark_result)
 
@@ -461,7 +466,7 @@ def _finalize_agent_result(
             else:
                 print(f"JUDGE VERDICT: PASS — {result.judge_reason}", flush=True)
     else:
-        result.error = "No solution submitted"
+        result.error = result.error or "No solution submitted"
 
 
 def run_eval(
@@ -487,11 +492,17 @@ def run_eval(
     gpu_name = hardware_target.display_name
     vram = hardware_target.vram_gb
 
+    kerminal_best_of_turns = model_config.provider == "kerminal"
     system_prompt = get_system_prompt(
         hardware_name=hardware_target.name, gpu_name=gpu_name, vram_gb=vram,
         is_metal=hardware_target.is_metal, use_xml_tools=model_config.use_xml_tools,
+        include_submit_tool=not kerminal_best_of_turns,
     )
-    system_prompt = augment_system_prompt(system_prompt, is_metal=hardware_target.is_metal)
+    system_prompt = augment_system_prompt(
+        system_prompt,
+        is_metal=hardware_target.is_metal,
+        best_of_turns=kerminal_best_of_turns,
+    )
 
     reference_metadata = extract_reference_metadata(problem_code)
 
@@ -532,6 +543,7 @@ def run_eval(
             max_turns=max_turns,
             reference_code=problem_code,
             metadata=reference_metadata,
+            best_of_turns=kerminal_best_of_turns,
         )
 
         if model_config.provider == "kerminal":
@@ -545,6 +557,8 @@ def run_eval(
                 max_turns=max_turns,
                 max_time=max_time,
                 is_metal=hardware_target.is_metal,
+                hardware=hardware_target.gpu_sku,
+                level=level,
             )
             if run.error:
                 result.error = run.error
@@ -565,6 +579,7 @@ def run_eval(
                 run.cache_read_tokens,
                 judge_model_key=judge_model_key,
                 problem_code=problem_code,
+                precomputed_benchmark_result=run.benchmark_result,
             )
             result.elapsed_seconds = time.time() - start_time
             return result

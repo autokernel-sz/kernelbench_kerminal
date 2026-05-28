@@ -82,8 +82,15 @@ def self_check_command(is_metal: bool) -> str:
     )
 
 
-def augment_system_prompt(system_prompt: str, is_metal: bool) -> str:
+def augment_system_prompt(system_prompt: str, is_metal: bool, best_of_turns: bool = False) -> str:
     check = self_check_command(is_metal)
+    if best_of_turns:
+        pass_instruction = """- If PASS: finish the current turn without calling submit; the harness will snapshot, benchmark, and report speedup feedback.
+- If FAIL: fix the numerical error and recheck. Do NOT present a candidate until PASS.
+- Optimize across the full turn budget. A correct candidate is not final unless the harness says time or turns are exhausted."""
+    else:
+        pass_instruction = """- If PASS: submit immediately.
+- If FAIL: fix the numerical error and recheck. Do NOT submit until PASS."""
     return (
         system_prompt
         + f"""
@@ -93,11 +100,10 @@ EXECUTION ENVIRONMENT:
 - Files: `reference.py`, `ENVIRONMENT.md`, `BACKEND_API.md`, `TEMPLATE_solution.py`, `TASK_CONTEXT.md`.
 - No internet. No package installation.
 
-REQUIRED CORRECTNESS CHECK (before submitting):
+REQUIRED CORRECTNESS CHECK (before candidate handoff):
 Run:
 `{check}`
-- If PASS: submit immediately.
-- If FAIL: fix the numerical error and recheck. Do NOT submit until PASS.
+{pass_instruction}
 """
     )
 
@@ -199,9 +205,18 @@ def seed_workspace_context(sandbox, context_bundle: Dict[str, str]) -> None:
 
 def build_initial_user_message(
     hardware_name: str, problem_name: str, level: int, gpu_name: str,
-    max_turns: int, reference_code: str, metadata: Dict[str, Any],
+    max_turns: int, reference_code: str, metadata: Dict[str, Any], best_of_turns: bool = False,
 ) -> str:
     precisions = ", ".join(metadata.get("supported_precisions", [])) or "unknown"
+    if best_of_turns:
+        turn_instruction = (
+            f"Use up to {max_turns} optimization turns. Each turn should leave your current candidate in "
+            "`/workspace/solution.py` after it passes the required self-check. The harness will benchmark "
+            "that candidate, keep the fastest correct one, and send benchmark feedback for the next turn. "
+            "Do not try to import or call a submit module."
+        )
+    else:
+        turn_instruction = "Take as many turns as you need. Run the correctness self-check and only submit after PASS."
     return f"""Optimize the benchmark task and produce `/workspace/solution.py`.
 
 - hardware: `{hardware_name}`
@@ -211,7 +226,7 @@ def build_initial_user_message(
 - op_type: `{metadata.get("op_type", "unknown")}`
 - precisions: `{precisions}`
 
-Take as many turns as you need. Run the correctness self-check and only submit after PASS.
+{turn_instruction}
 
 Reference code:
 ```python

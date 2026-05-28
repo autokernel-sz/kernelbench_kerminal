@@ -15,6 +15,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+def _output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
+
+
 @dataclass
 class MetalSandboxConfig:
     """Configuration for Metal sandbox."""
@@ -103,8 +111,8 @@ class MetalSandbox:
             }
         except subprocess.TimeoutExpired as e:
             return {
-                "stdout": e.stdout or "",
-                "stderr": e.stderr or f"Command timed out after {timeout or self.config.timeout}s",
+                "stdout": _output_text(e.stdout),
+                "stderr": _output_text(e.stderr) or f"Command timed out after {timeout or self.config.timeout}s",
                 "returncode": -1,
                 "timed_out": True,
             }

@@ -17,15 +17,35 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KERMINAL_SDK_SRC = Path("/workspace/kerminal/sdk/python/src")
+DEFAULT_KERMINAL_BIN_DIR = Path.home() / ".local" / "bin"
+
+
+def _kerminal_home() -> Path:
+    return Path(os.environ.get("KERMINAL_HOME", Path.home() / ".kerminal")).expanduser()
+
+
+def _has_kerminal_config_auth() -> bool:
+    home = _kerminal_home()
+    env_file = home / ".env"
+    if env_file.exists() and "KERMINAL_API_KEY=" in env_file.read_text(encoding="utf-8", errors="ignore"):
+        return True
+
+    config = home / "config.toml"
+    if not config.exists():
+        return False
+    config_text = config.read_text(encoding="utf-8", errors="ignore")
+    return "experimental_bearer_token" in config_text or "api_key" in config_text
 
 
 def _configure_environment() -> None:
     api_key = os.environ.get("KERMINAL_API_KEY", "").strip()
-    if not api_key:
+    has_config_auth = _has_kerminal_config_auth()
+    if not api_key and not has_config_auth:
         api_key = getpass.getpass("KERMINAL_API_KEY: ").strip()
-    if not api_key:
-        raise SystemExit("KERMINAL_API_KEY is required.")
-    os.environ["KERMINAL_API_KEY"] = api_key
+    if not api_key and not has_config_auth:
+        raise SystemExit("KERMINAL_API_KEY is required unless ~/.kerminal config already has auth.")
+    if api_key:
+        os.environ["KERMINAL_API_KEY"] = api_key
 
     if KERMINAL_SDK_SRC.exists():
         sdk_path = str(KERMINAL_SDK_SRC)
@@ -35,6 +55,12 @@ def _configure_environment() -> None:
             os.environ["PYTHONPATH"] = os.pathsep.join([sdk_path, *parts])
         if sdk_path not in sys.path:
             sys.path.insert(0, sdk_path)
+
+    if DEFAULT_KERMINAL_BIN_DIR.exists():
+        path_parts = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+        bin_dir = str(DEFAULT_KERMINAL_BIN_DIR)
+        if bin_dir not in path_parts:
+            os.environ["PATH"] = os.pathsep.join([bin_dir, *path_parts])
 
 
 def _load_results(run_dir: Path) -> list[dict[str, Any]]:
@@ -85,6 +111,10 @@ def _problem_path_by_name(hardware: str) -> dict[str, tuple[int, Path]]:
     return {path.name: (level, path) for level, path in target.find_problems(REPO_ROOT)}
 
 
+def _task_id(model_name: str, gpu_sku: str, problem: str) -> str:
+    return f"{model_name}_{gpu_sku}_{problem}".replace("/", "-").replace(" ", "_")
+
+
 def _retry_run_dir(source_run_dir: Path, output_dir: str | None) -> Path:
     if output_dir:
         return Path(output_dir)
@@ -133,17 +163,22 @@ def main() -> int:
     _configure_environment()
 
     from src.batch import run_single_eval
+    from src.hardware import get_target
+    from src.models import get_model_config
 
     retry_dir = _retry_run_dir(source_run_dir, args.output_dir)
     retry_dir.mkdir(parents=True, exist_ok=True)
     results_path = retry_dir / "results.jsonl"
+    target = get_target(args.hardware)
+    model_config = get_model_config(args.model)
+    model_name = model_config.name if model_config else args.model
 
     print(f"\nRetry run directory: {retry_dir}")
     start_time = time.time()
     for index, row in enumerate(failures, 1):
         problem = row["problem"]
         level, problem_path = problem_map[problem]
-        task_id = f"Kerminal Default_H100_{problem}".replace("/", "-").replace(" ", "_")
+        task_id = _task_id(model_name, target.gpu_sku, problem)
         turn_dir = retry_dir / "turns" / task_id
         result = run_single_eval(
             args.hardware,

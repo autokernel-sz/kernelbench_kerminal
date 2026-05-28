@@ -7,15 +7,17 @@ def test_all_targets_registered():
     assert "rtx3090" in TARGETS
     assert "h100" in TARGETS
     assert "h100_local" in TARGETS
+    assert "a100_local" in TARGETS
     assert "b200" in TARGETS
     assert "m4max" in TARGETS
 
 
 def test_list_targets():
     names = list_targets()
-    assert len(names) == 5
+    assert len(names) == 6
     assert "rtx3090" in names
     assert "h100_local" in names
+    assert "a100_local" in names
 
 
 def test_rtx3090_config():
@@ -40,6 +42,15 @@ def test_h100_local_config():
     assert t.gpu_sku == "H100"
     assert t.vram_gb == 80
     assert "tile_specialized" in t.problem_dirs
+
+
+def test_a100_local_config():
+    t = get_target("a100_local")
+    assert t.display_name == "A100 Local"
+    assert t.gpu_sku == "A100"
+    assert t.vram_gb == 80
+    assert "tile_specialized" in t.problem_dirs
+    assert "4_FP8_Matmul.py" in t.exclude_problems
 
 
 def test_problem_discovery():

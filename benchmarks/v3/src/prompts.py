@@ -54,6 +54,26 @@ PROFILING:
   separate streams. Never trust sub-10us measurements from events.
 """
 
+ARCH_A100 = """
+HARDWARE CAPABILITIES (A100 — Ampere SM80):
+- Tensor Cores: 3rd gen, warp-level (32 threads) via mma.sync PTX or nvcuda::wmma
+- Supported TC types: FP16×FP16→FP16/FP32, BF16×BF16→FP32, TF32×TF32→FP32, INT8×INT8→INT32
+- No native FP8 or FP4 tensor cores. Use FP16/BF16/TF32 paths instead.
+- Instruction shapes: m16n8k16 (FP16/BF16), m16n8k8 (TF32), m16n8k32 (INT8)
+- cp.async is available for asynchronous global→shared memory copies
+- 2:4 structured sparsity supported
+- CUTLASS 2.x and Ampere CUTLASS 3.x kernels target `cutlass::arch::Sm80`
+- CuTe layouts work, but MMA atoms are warp-level only (not WGMMA/TMA)
+- CUTLASS headers at `/opt/cutlass/include`
+- Compile with: `-arch=sm_80 -I/opt/cutlass/include -std=c++17`
+
+OPTIMIZATION GUIDANCE:
+- For GEMM: use WMMA, mma.sync, Triton dot, or CUTLASS Sm80 kernels with FP16/BF16/TF32.
+- For FP8-like/int8-quantized references, dequantize or unpack efficiently and compute with FP16/BF16/INT8 paths; do not use Hopper WGMMA/TMA instructions.
+- Use cp.async and shared-memory double buffering for large tiled kernels.
+- For memory-bound elementwise, normalization, pooling, and reductions: fuse work, keep data in registers, coalesce loads/stores, and avoid unnecessary shared-memory synchronization.
+"""
+
 ARCH_H100 = """
 HARDWARE CAPABILITIES (H100 — Hopper SM90):
 - Tensor Cores: 4th gen, warp-group level (128 threads) via WGMMA (wgmma.mma_async)
@@ -123,6 +143,13 @@ TOOLS:
 - bash(command): Execute shell commands
 - submit(solution_path): Submit for benchmarking"""
 
+TOOLS_SECTION_NO_SUBMIT = """
+TOOLS:
+- read_file(path): Read file contents
+- write_file(path, content): Create or overwrite a file
+- edit_file(path, old_str, new_str): Replace unique string in file
+- bash(command): Execute shell commands"""
+
 TOOLS_XML_SECTION = """
 TOOLS (XML format):
 <tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
@@ -131,20 +158,41 @@ TOOLS (XML format):
 <tool_call><bash><command>COMMAND</command></bash></tool_call>
 <tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
 
+TOOLS_XML_SECTION_NO_SUBMIT = """
+TOOLS (XML format):
+<tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
+<tool_call><write_file><path>/workspace/solution.py</path><content>CODE</content></write_file></tool_call>
+<tool_call><edit_file><path>PATH</path><old_str>OLD</old_str><new_str>NEW</new_str></edit_file></tool_call>
+<tool_call><bash><command>COMMAND</command></bash></tool_call>"""
+
 
 def _get_arch_section(hardware_name: str) -> str:
     return {
         "rtx3090": ARCH_RTX3090,
+        "a100_local": ARCH_A100,
         "h100": ARCH_H100,
         "h100_local": ARCH_H100,
         "b200": ARCH_B200,
     }.get(hardware_name, "")
 
 
-def get_system_prompt(hardware_name: str, gpu_name: str, vram_gb: int, is_metal: bool = False, use_xml_tools: bool = False) -> str:
+def _tools_section(use_xml_tools: bool, include_submit_tool: bool) -> str:
+    if use_xml_tools:
+        return TOOLS_XML_SECTION if include_submit_tool else TOOLS_XML_SECTION_NO_SUBMIT
+    return TOOLS_SECTION if include_submit_tool else TOOLS_SECTION_NO_SUBMIT
+
+
+def get_system_prompt(
+    hardware_name: str,
+    gpu_name: str,
+    vram_gb: int,
+    is_metal: bool = False,
+    use_xml_tools: bool = False,
+    include_submit_tool: bool = True,
+) -> str:
     if is_metal:
-        return _metal_system_prompt(gpu_name, vram_gb, use_xml_tools)
-    return _nvidia_system_prompt(hardware_name, gpu_name, vram_gb, use_xml_tools)
+        return _metal_system_prompt(gpu_name, vram_gb, use_xml_tools, include_submit_tool)
+    return _nvidia_system_prompt(hardware_name, gpu_name, vram_gb, use_xml_tools, include_submit_tool)
 
 
 def get_reasoning_prompt(hardware_name: str, gpu_name: str, vram_gb: int, is_metal: bool = False) -> str:
@@ -153,8 +201,13 @@ def get_reasoning_prompt(hardware_name: str, gpu_name: str, vram_gb: int, is_met
     return _nvidia_reasoning_prompt(hardware_name, gpu_name, vram_gb)
 
 
-def _nvidia_system_prompt(hardware_name: str, gpu_name: str, vram_gb: int, use_xml_tools: bool) -> str:
+def _nvidia_system_prompt(hardware_name: str, gpu_name: str, vram_gb: int, use_xml_tools: bool, include_submit_tool: bool) -> str:
     arch_section = _get_arch_section(hardware_name)
+    submit_instruction = (
+        "- Submit ONLY after PASS. If FAIL, fix and recheck."
+        if include_submit_tool
+        else "- When PASS, leave the candidate in /workspace/solution.py and finish the turn. The harness will benchmark it; do not call submit."
+    )
 
     base = f"""You are a GPU kernel optimization expert in an isolated sandbox on an NVIDIA {gpu_name} ({vram_gb}GB VRAM).
 
@@ -175,11 +228,11 @@ FORBIDDEN (guardrail — will reject your submission):
 
 INTERFACE: Keep `Model`, `get_inputs`, `get_init_inputs` compatible with reference.py.
 
-CORRECTNESS CHECK (run before submitting):
+CORRECTNESS CHECK (run before candidate handoff):
 `python -c "import reference, solution, torch; ref_m=reference.Model(*reference.get_init_inputs()).cuda().eval(); sol_m=solution.Model(*reference.get_init_inputs()).cuda().eval(); sol_m.load_state_dict(ref_m.state_dict(),strict=False); inputs=[x.cuda() if isinstance(x, torch.Tensor) else x for x in reference.get_inputs()]; ref_out=ref_m(*inputs); sol_out=sol_m(*inputs); diff=torch.max(torch.abs(ref_out-sol_out)).item(); print(f'max_diff={{diff:.6f}}'); print('PASS' if torch.allclose(ref_out,sol_out,atol=1e-2,rtol=1e-2) else 'FAIL')"`
-- Submit ONLY after PASS. If FAIL, fix and recheck."""
+{submit_instruction}"""
 
-    return base + (TOOLS_XML_SECTION if use_xml_tools else TOOLS_SECTION)
+    return base + _tools_section(use_xml_tools, include_submit_tool)
 
 
 def _nvidia_reasoning_prompt(hardware_name: str, gpu_name: str, vram_gb: int) -> str:
@@ -196,7 +249,13 @@ Keep `Model`, `get_inputs`, `get_init_inputs` compatible with reference. Correct
 Provide complete solution.py in a ```python code block."""
 
 
-def _metal_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool) -> str:
+def _metal_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool, include_submit_tool: bool) -> str:
+    submit_instruction = (
+        "- Submit ONLY after PASS."
+        if include_submit_tool
+        else "- When PASS, leave the candidate in /workspace/solution.py and finish the turn. The harness will benchmark it; do not call submit."
+    )
+
     base = f"""You are an Apple Silicon kernel optimization expert in an isolated sandbox on {gpu_name} ({vram_gb}GB unified memory).
 
 TASK: Write an optimized MLX kernel faster than the PyTorch reference in /workspace/reference.py.
@@ -210,11 +269,11 @@ FORBIDDEN:
 - `import torch`, `import triton`, `torch.utils.cpp_extension`
 - Must use MLX only
 
-CORRECTNESS CHECK (run before submitting):
+CORRECTNESS CHECK (run before candidate handoff):
 `python -c "import mlx.core as mx, reference, solution, numpy as np; ref_m=reference.Model(*reference.get_init_inputs()); inputs=reference.get_inputs(); mlx_inputs=[mx.array(x.numpy()) if hasattr(x,'numpy') else x for x in inputs]; ref_out=ref_m(*[x.to('mps') if hasattr(x,'to') else x for x in inputs]).cpu(); sol_out=solution.solution(*mlx_inputs); mx.eval(sol_out); diff=float(np.max(np.abs(np.array(sol_out)-ref_out.numpy()))); print(f'max_diff={{diff:.6f}}'); print('PASS' if diff<0.01 else 'FAIL')"`
-- Submit ONLY after PASS."""
+{submit_instruction}"""
 
-    return base + (TOOLS_XML_SECTION if use_xml_tools else TOOLS_SECTION)
+    return base + _tools_section(use_xml_tools, include_submit_tool)
 
 
 def _metal_reasoning_prompt(gpu_name: str, vram_gb: int) -> str:

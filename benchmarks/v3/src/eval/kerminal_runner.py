@@ -21,6 +21,7 @@ if KERMINAL_SDK_SRC.exists():
         sys.path.insert(0, sdk_path)
 
 DEFAULT_KERMINAL_NETWORK_RETRIES = 2
+DEFAULT_KERMINAL_BIN_DIR = Path.home() / ".local" / "bin"
 
 
 @dataclass
@@ -33,6 +34,7 @@ class KerminalRunResult:
     cache_creation_tokens: int
     cache_read_tokens: int
     error: Optional[str] = None
+    benchmark_result: Optional[dict[str, Any]] = None
 
 
 @dataclass
@@ -44,6 +46,13 @@ class _VerificationResult:
     error: Optional[str] = None
 
 
+@dataclass
+class _CandidateResult:
+    turn: int
+    solution_path: str
+    benchmark_result: dict[str, Any]
+
+
 def run_kerminal_agent(
     *,
     model_id: str,
@@ -53,6 +62,8 @@ def run_kerminal_agent(
     max_turns: int,
     max_time: Optional[int],
     is_metal: bool = False,
+    hardware: str = "UNKNOWN",
+    level: int = 1,
 ) -> KerminalRunResult:
     return asyncio.run(
         _run_kerminal_agent_async(
@@ -63,6 +74,8 @@ def run_kerminal_agent(
             max_turns=max_turns,
             max_time=max_time,
             is_metal=is_metal,
+            hardware=hardware,
+            level=level,
         )
     )
 
@@ -76,6 +89,8 @@ async def _run_kerminal_agent_async(
     max_turns: int,
     max_time: Optional[int],
     is_metal: bool,
+    hardware: str,
+    level: int,
 ) -> KerminalRunResult:
     retry_budget = _network_retry_budget()
     max_attempts = retry_budget + 1
@@ -109,6 +124,8 @@ async def _run_kerminal_agent_async(
             max_turns=max_turns,
             max_time=attempt_max_time,
             is_metal=is_metal,
+            hardware=hardware,
+            level=level,
         )
         total_input_tokens += result.input_tokens
         total_output_tokens += result.output_tokens
@@ -158,6 +175,8 @@ async def _run_kerminal_agent_once_async(
     max_turns: int,
     max_time: Optional[int],
     is_metal: bool,
+    hardware: str,
+    level: int,
 ) -> KerminalRunResult:
     try:
         from kerminal import (
@@ -211,6 +230,8 @@ async def _run_kerminal_agent_once_async(
     outer_turns_sent = 0
     submitted = False
     solution_path: Optional[str] = None
+    selected_benchmark_result: Optional[dict[str, Any]] = None
+    best_candidate: _CandidateResult | None = None
     state: dict[str, Any] = {
         "conversation_id": None,
         "error": None,
@@ -287,7 +308,10 @@ async def _run_kerminal_agent_once_async(
             _signal_turn_done(state)
             return
         if isinstance(msg, StreamErrorEvent):
-            state["error"] = f"stream_error: {msg.message}"
+            message = str(msg.message)
+            if _is_internal_stream_retry_message(message):
+                return
+            state["error"] = f"stream_error: {message}"
             _signal_turn_done(state)
             return
         if isinstance(msg, TurnAbortedEvent):
@@ -347,6 +371,7 @@ async def _run_kerminal_agent_once_async(
 
             state["task_complete"] = False
             state["active_turn_id"] = None
+            completed_turn_ids.clear()
             state["turn_done"] = asyncio.Event()
             items = [{"type": "text", "data": {"text": next_turn_text}}]
             await client.send_user_turn(
@@ -377,9 +402,44 @@ async def _run_kerminal_agent_once_async(
                 artifact_dir=artifact_dir,
             )
             if verification.submitted:
-                submitted = True
-                solution_path = verification.solution_path
-                break
+                candidate_path = _snapshot_solution(sandbox, outer_turn, artifact_dir)
+                if candidate_path is None:
+                    state["error"] = "failed_to_snapshot_solution"
+                    break
+                benchmark_result = _benchmark_candidate(
+                    sandbox=sandbox,
+                    is_metal=is_metal,
+                    turn=outer_turn,
+                    candidate_path=candidate_path,
+                    artifact_dir=artifact_dir,
+                    hardware=hardware,
+                    level=level,
+                )
+                candidate = _CandidateResult(
+                    turn=outer_turn,
+                    solution_path=candidate_path,
+                    benchmark_result=benchmark_result,
+                )
+                append_jsonl(
+                    event_log,
+                    {
+                        "type": "candidate_benchmark",
+                        "outer_turn": outer_turn,
+                        "candidate_path": candidate_path,
+                        "benchmark": benchmark_result,
+                    },
+                )
+                if _candidate_is_better(candidate, best_candidate):
+                    best_candidate = candidate
+                    _write_best_candidate_artifact(artifact_dir, best_candidate)
+                if outer_turn >= effective_max_turns:
+                    break
+                next_turn_text = _candidate_feedback(
+                    candidate=candidate,
+                    best_candidate=best_candidate,
+                    turns_remaining=effective_max_turns - outer_turn,
+                )
+                continue
             if verification.error:
                 state["error"] = verification.error
                 break
@@ -400,6 +460,17 @@ async def _run_kerminal_agent_once_async(
         except Exception:
             pass
 
+    if best_candidate is not None:
+        if _restore_candidate(sandbox, best_candidate.solution_path):
+            submitted = True
+            solution_path = "solution.py"
+            selected_benchmark_result = best_candidate.benchmark_result
+            state["error"] = None
+        else:
+            state["error"] = "failed_to_restore_best_candidate"
+    elif state["error"] is None and outer_turns_sent >= effective_max_turns:
+        state["error"] = "max_turns_exceeded"
+
     return KerminalRunResult(
         submitted=submitted,
         solution_path=solution_path,
@@ -409,6 +480,7 @@ async def _run_kerminal_agent_once_async(
         cache_creation_tokens=int(state["cache_creation_tokens"]),
         cache_read_tokens=int(state["cache_read_tokens"]),
         error=state["error"],
+        benchmark_result=selected_benchmark_result,
     )
 
 
@@ -425,8 +497,15 @@ def _client_env() -> dict[str, str]:
     env = {}
     pythonpath = os.environ.get("PYTHONPATH", "")
     sdk_path = str(KERMINAL_SDK_SRC)
-    if KERMINAL_SDK_SRC.exists() and sdk_path not in pythonpath.split(":"):
-        env["PYTHONPATH"] = f"{sdk_path}:{pythonpath}" if pythonpath else sdk_path
+    if KERMINAL_SDK_SRC.exists() and sdk_path not in pythonpath.split(os.pathsep):
+        env["PYTHONPATH"] = f"{sdk_path}{os.pathsep}{pythonpath}" if pythonpath else sdk_path
+
+    if DEFAULT_KERMINAL_BIN_DIR.exists():
+        path = os.environ.get("PATH", "")
+        parts = [p for p in path.split(os.pathsep) if p]
+        bin_dir = str(DEFAULT_KERMINAL_BIN_DIR)
+        if bin_dir not in parts:
+            env["PATH"] = os.pathsep.join([bin_dir, *parts])
     return env
 
 
@@ -480,7 +559,15 @@ def _with_accumulated_usage(
         cache_creation_tokens=cache_creation_tokens,
         cache_read_tokens=cache_read_tokens,
         error=result.error,
+        benchmark_result=result.benchmark_result,
     )
+
+
+def _is_internal_stream_retry_message(message: str | None) -> bool:
+    if not message:
+        return False
+    normalized = message.strip().lower()
+    return "retrying" in normalized and "/" in normalized
 
 
 def _is_retryable_kerminal_error(error: str | None) -> bool:
@@ -602,6 +689,135 @@ def _write_turn_artifact(
             f.write(content)
     except Exception:
         pass
+
+
+def _write_named_artifact(artifact_dir: Path | None, name: str, content: str) -> None:
+    if artifact_dir is None:
+        return
+    try:
+        with open(artifact_dir / name, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception:
+        pass
+
+
+def _snapshot_solution(sandbox, turn: int, artifact_dir: Path | None) -> str | None:
+    code = sandbox.read_file("solution.py")
+    if code is None:
+        return None
+    candidate_path = f"turn_{turn}_solution.py"
+    sandbox.write_file(candidate_path, code)
+    _write_turn_artifact(artifact_dir, turn, "solution.py", code)
+    return candidate_path
+
+
+def _benchmark_candidate(
+    *,
+    sandbox,
+    is_metal: bool,
+    turn: int,
+    candidate_path: str,
+    artifact_dir: Path | None,
+    hardware: str,
+    level: int,
+) -> dict[str, Any]:
+    from src.eval.benchmark import run_benchmark
+
+    benchmark_result = run_benchmark(
+        sandbox,
+        candidate_path,
+        hardware=hardware,
+        level=level,
+        is_metal=is_metal,
+    ) or {"compiled": False, "correct": False, "speedup": None, "error": "benchmark returned no result"}
+    _write_turn_artifact(
+        artifact_dir,
+        turn,
+        "benchmark.json",
+        json.dumps(benchmark_result, indent=2, sort_keys=True) + "\n",
+    )
+    return benchmark_result
+
+
+def _candidate_score(candidate: _CandidateResult | None) -> float | None:
+    if candidate is None:
+        return None
+    if not candidate.benchmark_result.get("correct"):
+        return None
+    speedup = candidate.benchmark_result.get("speedup")
+    if not isinstance(speedup, (int, float)):
+        return None
+    return float(speedup)
+
+
+def _candidate_is_better(candidate: _CandidateResult, best_candidate: _CandidateResult | None) -> bool:
+    candidate_score = _candidate_score(candidate)
+    if candidate_score is None:
+        return False
+    best_score = _candidate_score(best_candidate)
+    return best_score is None or candidate_score > best_score
+
+
+def _write_best_candidate_artifact(artifact_dir: Path | None, candidate: _CandidateResult) -> None:
+    payload = {
+        "turn": candidate.turn,
+        "solution_path": candidate.solution_path,
+        "benchmark": candidate.benchmark_result,
+    }
+    _write_named_artifact(
+        artifact_dir,
+        "best_candidate.json",
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def _restore_candidate(sandbox, candidate_path: str) -> bool:
+    code = sandbox.read_file(candidate_path)
+    if code is None:
+        return False
+    sandbox.write_file("solution.py", code)
+    return True
+
+
+def _format_speedup(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.4f}x"
+    return "--"
+
+
+def _benchmark_feedback(benchmark_result: dict[str, Any]) -> str:
+    fields = [
+        f"compiled={benchmark_result.get('compiled')}",
+        f"correct={benchmark_result.get('correct')}",
+        f"speedup={_format_speedup(benchmark_result.get('speedup'))}",
+        f"ref_ms={benchmark_result.get('ref_ms', '--')}",
+        f"sol_ms={benchmark_result.get('sol_ms', '--')}",
+        f"kernels={benchmark_result.get('ref_kernels', '--')}->{benchmark_result.get('sol_kernels', '--')}",
+    ]
+    error = benchmark_result.get("error")
+    if error:
+        fields.append(f"error={error}")
+    return ", ".join(fields)
+
+
+def _candidate_feedback(
+    *,
+    candidate: _CandidateResult,
+    best_candidate: _CandidateResult | None,
+    turns_remaining: int,
+) -> str:
+    best_score = _candidate_score(best_candidate)
+    best_line = "No correct benchmarked candidate yet."
+    if best_candidate is not None and best_score is not None:
+        best_line = f"Current best: turn {best_candidate.turn}, speedup={best_score:.4f}x."
+    return (
+        f"Official benchmark for turn {candidate.turn}: "
+        f"{_benchmark_feedback(candidate.benchmark_result)}\n"
+        f"{best_line}\n"
+        f"Turns remaining: {turns_remaining}. Continue optimizing `/workspace/solution.py`. "
+        "Keep correctness, run the required self-check, and finish the turn with your next candidate in place. "
+        "Do not call submit; the harness will benchmark the next candidate."
+    )
 
 
 def _verify_solution(

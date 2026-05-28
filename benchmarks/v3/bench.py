@@ -91,7 +91,7 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     p_run = sub.add_parser("run", help="Run benchmark evaluations")
-    p_run.add_argument("hardware", help="Hardware target: rtx3090, h100, b200, m4max")
+    p_run.add_argument("hardware", help="Hardware target: rtx3090, h100, h100_local, a100_local, b200, m4max")
     p_run.add_argument("--models", required=True, help="Model key(s), comma-separated, or 'all'")
     p_run.add_argument("--levels", default="1,2,3,4", help="Comma-separated levels")
     p_run.add_argument("--workers", type=int, default=4)
